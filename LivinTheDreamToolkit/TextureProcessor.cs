@@ -27,26 +27,30 @@ public static class TextureProcessor
         return TextureKind.Canvas;
     }
 
+    public enum TextureFormat { Bc1, Bc3 }
+
     public record UgctexLayout(
         int Width,
         int Height,
         int SwizzleBlocksWide,
         int SwizzleBlocksTall,
-        int BlockHeight)
+        int BlockHeight,
+        TextureFormat Format)
     {
-        public int RawBytes => SwizzleBlocksTall * DivRoundUp(SwizzleBlocksWide * 8, 64) * 64;
+        public int BytesPerBlock => Format == TextureFormat.Bc3 ? 16 : 8;
     }
 
     public static UgctexLayout DetectUgctexLayout(int decompressedBytes)
     {
         return decompressedBytes switch
         {
-            131072 => new UgctexLayout(512, 512, 128, 128, 16),
-            98304 => new UgctexLayout(384, 384, 96, 128, 16),
+            131072 => new UgctexLayout(512, 512, 128, 128, 16, TextureFormat.Bc1),
+            98304 => new UgctexLayout(384, 384, 96, 128, 16, TextureFormat.Bc1),
+            65536 => new UgctexLayout(256, 256, 64, 64, 8, TextureFormat.Bc3),
             _ => throw new InvalidDataException(
-                $"Unknown ugctex format: {decompressedBytes} bytes decompressed " +
-                $"({decompressedBytes / 8} BC1 blocks). Known sizes: " +
-                "131072 (512x512 face paint), 98304 (384x384 food/goods)."),
+                $"Unknown ugctex format: {decompressedBytes} bytes decompressed. " +
+                "Known sizes: 131072 (512x512 BC1 face paint), " +
+                "98304 (384x384 BC1 food/goods), 65536 (256x256 BC3)."),
         };
     }
 
@@ -113,10 +117,12 @@ public static class TextureProcessor
             rawData,
             visibleBlocksWide,
             visibleBlocksTall,
-            8,
+            layout.BytesPerBlock,
             layout.BlockHeight);
 
-        byte[] rgba = Bc1Decode(blocks, layout.Width, layout.Height);
+        byte[] rgba = layout.Format == TextureFormat.Bc3
+            ? Bc3Decode(blocks, layout.Width, layout.Height)
+            : Bc1Decode(blocks, layout.Width, layout.Height);
         if (!noSrgb) ConvertLinearToSrgb(rgba);
 
         return Image.LoadPixelData<Rgba32>(rgba, layout.Width, layout.Height);
@@ -181,11 +187,11 @@ public static class TextureProcessor
             originalSwizzled = ZstdDecompress(originalUgctexPath);
             layout = DetectUgctexLayout(originalSwizzled.Length);
             log($"Detected target layout from {Path.GetFileName(originalUgctexPath)}: " +
-                $"{layout.Width}x{layout.Height} BC1 (raw {layout.RawBytes} bytes)");
+                $"{layout.Width}x{layout.Height} BC1 (raw {layout} bytes)");
         }
         else
         {
-            layout = new UgctexLayout(512, 512, 128, 128, 16);
+            layout = new UgctexLayout(512, 512, 128, 128, 16, TextureFormat.Bc1);
         }
 
         if (writeCanvas)
@@ -225,22 +231,24 @@ public static class TextureProcessor
 
             if (!noSrgb) ConvertSrgbToLinear(ugcRgba);
 
-            byte[] bc1Blocks = Bc1Encode(ugcRgba, ugcW, ugcH);
+            byte[] encodedBlocks = layout.Format == TextureFormat.Bc3
+                ? Bc3Encode(ugcRgba, ugcW, ugcH)
+                : Bc1Encode(ugcRgba, ugcW, ugcH);
 
 
             int visibleBlocksWide = layout.Width / 4;
             int visibleBlocksTall = layout.Height / 4;
             byte[] ugcSwizzled = SwizzleBlockLinear(
-                bc1Blocks,
+                encodedBlocks,
                 visibleBlocksWide,
                 visibleBlocksTall,
-                8,
+                layout.BytesPerBlock,
                 layout.BlockHeight,
                 baseBuffer: originalSwizzled);
 
             string ugcPath = destStem + ".ugctex.zs";
             File.WriteAllBytes(ugcPath, ZstdCompress(ugcSwizzled, ZstdLevel));
-            log($"Wrote {ugcPath} ({layout.Width}x{layout.Height} BC1)");
+            log($"Wrote {ugcPath} ({layout.Width}x{layout.Height} {layout.Format})");
         }
 
         if (writeThumb)
