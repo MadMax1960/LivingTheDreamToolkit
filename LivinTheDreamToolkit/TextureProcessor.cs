@@ -15,7 +15,7 @@ public static class TextureProcessor
     public enum TextureKind
     {
         Canvas,   // .canvas.zs          256x256 RGBA8
-        Ugctex,   // .ugctex.zs          512x512 BC1 (most thing) or 384x384 BC1 (food, hopefully nothing else...)
+        Ugctex,   // .ugctex.zs          512x512 BC1 (most things), 384x384 BC1 (food), or 256x256 BC1 (some goods)
         Thumb,    // _Thumb_ugctex.zs    256x256 BC3
     }
 
@@ -43,10 +43,11 @@ public static class TextureProcessor
         {
             131072 => new UgctexLayout(512, 512, 128, 128, 16),
             98304 => new UgctexLayout(384, 384, 96, 128, 16),
+            65536 => new UgctexLayout(256, 256, 64, 128, 16),
             _ => throw new InvalidDataException(
                 $"Unknown ugctex format: {decompressedBytes} bytes decompressed " +
                 $"({decompressedBytes / 8} BC1 blocks). Known sizes: " +
-                "131072 (512x512 face paint), 98304 (384x384 food/goods)."),
+                "131072 (512x512 face paint), 98304 (384x384 food/goods), 65536 (256x256 goods)."),
         };
     }
 
